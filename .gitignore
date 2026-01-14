@@ -1,0 +1,23 @@
+# --- Ignorar arquivos do Sistema/Editor ---
+__pycache__/
+.vscode/
+.idea/
+
+# --- Ignorar Ambiente Virtual (pasta da biblioteca) ---
+.venv/
+venv/
+env/
+
+# --- Ignorar Dados Coletados (JSONs pesados) ---
+data/*.json
+
+# --- 🚨 IGNORAR CREDENCIAIS E SESSÕES (CRÍTICO) ---
+# Ignora a pasta de logins do Instagram
+src/config/instagram/logins_instagram/
+
+# Ignora a pasta de logins do TikTok
+src/config/tiktok/logins_tiktok/
+
+# Ignora qualquer arquivo .pkl (cookies) ou sessão solta
+*.pkl
+*session*
