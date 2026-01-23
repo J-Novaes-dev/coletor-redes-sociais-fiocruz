@@ -1,33 +1,48 @@
-import instaloader
+import pickle
 import os
+import time
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 
-usuario = "carolbrito2110"
-
-print(f"📸 Iniciando login INSTAGRAM para: {usuario}")
-print("Digite sua senha quando solicitado...")
-
-L = instaloader.Instaloader()
-
-try:
-    L.interactive_login(usuario)
+def salvar_cookies_instagram():
+    options = Options()
+    options.add_argument("--start-maximized")
+    options.add_argument("--disable-blink-features=AutomationControlled")
     
-    # --- NOVA LÓGICA DE CAMINHOS ---
-    # Pega a pasta onde este script está (src/config/instagram)
-    pasta_atual = os.path.dirname(os.path.abspath(__file__))
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
-    # Define a subpasta de armazenamento
-    pasta_destinos = os.path.join(pasta_atual, "logins_instagram")
-    
-    # Cria a pasta se não existir
-    if not os.path.exists(pasta_destinos):
-        os.makedirs(pasta_destinos)
+    try:
+        print("📸 Abrindo Instagram para Login...")
+        driver.get("https://www.instagram.com/accounts/login/")
         
-    # Define o caminho final do arquivo
-    caminho_arquivo = os.path.join(pasta_destinos, f"session-{usuario}")
-    
-    L.save_session_to_file(filename=caminho_arquivo)
-    
-    print(f"\n✅ SUCESSO! Sessão salva em:\n{caminho_arquivo}")
+        print("\n" + "█"*60)
+        print("🚨 FAÇA O LOGIN MANUALMENTE NO NAVEGADOR 🚨")
+        print("1. Digite seu usuário e senha.")
+        print("2. Se pedir código 2FA, digite.")
+        print("3. Se aparecer 'Salvar Informações', clique em 'Agora não'.")
+        input("👉 DEPOIS QUE ESTIVER NA TELA INICIAL (FEED), APERTE [ENTER] AQUI...")
+        print("█"*60 + "\n")
+        
+        # --- Lógica de Caminhos ---
+        pasta_atual = os.path.dirname(os.path.abspath(__file__))
+        pasta_destinos = os.path.join(pasta_atual, "logins_instagram")
+        
+        if not os.path.exists(pasta_destinos):
+            os.makedirs(pasta_destinos)
+            
+        caminho_cookie = os.path.join(pasta_destinos, "instagram_cookies.pkl")
+        
+        # Salva os cookies do navegador
+        pickle.dump(driver.get_cookies(), open(caminho_cookie, "wb"))
+        
+        print(f"✅ SUCESSO! Cookies do Instagram salvos em:\n{caminho_cookie}")
 
-except Exception as e:
-    print(f"\n❌ Erro: {e}")
+    except Exception as e:
+        print(f"❌ Erro: {e}")
+    finally:
+        driver.quit()
+
+if __name__ == "__main__":
+    salvar_cookies_instagram()

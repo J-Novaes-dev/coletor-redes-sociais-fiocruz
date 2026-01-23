@@ -1,177 +1,177 @@
-import instaloader
 import json
-import csv
-import os
 import time
+import os
+import pickle
+import platform
+import csv
 import random
 from datetime import datetime
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 
-# --- 1. CONFIGURAÇÃO E LOGIN ---
-
-L = instaloader.Instaloader(
-    download_pictures=False,
-    download_videos=False,
-    save_metadata=False,
-    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-)
-
-usuario_sessao = "carolbrito2110"
-
-# --- NOVA LÓGICA DE CAMINHO (PROFISSIONAL) ---
-# src/
-diretorio_src = os.path.dirname(os.path.abspath(__file__))
-# src/config/instagram/logins_instagram/session-usuario
-caminho_sessao = os.path.join(diretorio_src, "config", "instagram", "logins_instagram", f"session-{usuario_sessao}")
-
-try:
-    print(f"🔐 Buscando credenciais em: {caminho_sessao}")
-    L.load_session_from_file(usuario_sessao, filename=caminho_sessao)
-    print("✅ Login carregado com sucesso!")
-except FileNotFoundError:
-    print("❌ ERRO CRÍTICO: Arquivo de sessão não encontrado.")
-    print(f"Esperado em: {caminho_sessao}")
-    print("Dica: Vá em 'src/config/instagram/' e rode o 'setup_login_instagram.py'.")
-    exit()
-
-# --- 2. FUNÇÃO DE EXTRAÇÃO ---
-
-def extrair_dados_perfil(username):
-    print(f"🔄 Iniciando coleta para o perfil: {username}...")
+# --- CONFIGURAÇÃO DO DRIVER ---
+def iniciar_driver():
+    options = Options()
+    options.add_argument("--start-maximized")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
     
+    servico = Service(ChromeDriverManager().install())
+    return webdriver.Chrome(service=servico, options=options)
+
+# --- DETECTOR DE BLOQUEIO (HUMAN-IN-THE-LOOP) 🚨 ---
+def verificar_bloqueios(driver):
     try:
-        profile = instaloader.Profile.from_username(L.context, username)
+        url_atual = driver.current_url.lower()
+        if "challenge" in url_atual or "login" in url_atual or "checkpoint" in url_atual:
+            print("\n" + "█"*50)
+            print("🚨 BLOQUEIO DETECTADO NO INSTAGRAM!")
+            print("O Instagram deslogou a conta ou pediu verificação (SMS/Código).")
+            print("👉 AÇÃO: Vá ao navegador e resolva a verificação.")
+            input("👉 DEPOIS: Aperte [ENTER] aqui para continuar...")
+            time.sleep(3)
+            return True
+            
+        # Verifica se apareceu a tela "Página não encontrada" (bloqueio ou perfil não existe)
+        if "Página não encontrada" in driver.title:
+            return False
+
+    except Exception as e: pass
+    return False
+
+# --- LÓGICA POR PERFIL ---
+def processar_perfil(driver, perfil_alvo):
+    dados_finais = {
+        "username": perfil_alvo,
+        "scraped_at": datetime.now().isoformat(),
+        "posts": []
+    }
+
+    try:
+        url_perfil = f"https://www.instagram.com/{perfil_alvo}/"
+        print(f"🔄 Acessando Perfil: {url_perfil}")
+        driver.get(url_perfil)
+        time.sleep(5) # Espera carregar o perfil
+
+        verificar_bloqueios(driver)
+
+        # 1. Encontra o primeiro post (A tag <a> que leva para /p/ ou /reel/)
+        posts_na_tela = driver.find_elements(By.XPATH, "//a[contains(@href, '/p/') or contains(@href, '/reel/')]")
         
-        dados_coletados = {
-            "platform": "instagram",
-            "scraped_at": datetime.now().isoformat(),
-            "profile_info": {
-                "username": profile.username,
-                "full_name": profile.full_name,
-                "biography": profile.biography,
-                "is_verified": profile.is_verified,
-                "followers_count": profile.followers,
-                "following_count": profile.followees,
-                "external_url": profile.external_url,
-                "profile_image_url": profile.profile_pic_url
-            },
-            "posts": []
-        }
+        if len(posts_na_tela) == 0:
+            print(f"⚠️ AVISO: Nenhum post encontrado em @{perfil_alvo}.")
+            print("🛑 PAUSANDO: Se a página não carregou, dê F5. Se o perfil for privado, o robô não vai conseguir ler.")
+            input("Aperte [ENTER] para tentar de novo...")
+            time.sleep(3)
+            posts_na_tela = driver.find_elements(By.XPATH, "//a[contains(@href, '/p/') or contains(@href, '/reel/')]")
+            if len(posts_na_tela) == 0: return None
 
-        print("📥 Baixando posts...")
-        count_posts = 0
-        max_posts = 5  # Mantenha baixo para evitar bloqueios
+        print("👆 Abrindo primeiro post...")
+        driver.execute_script("arguments[0].click();", posts_na_tela[0])
+        time.sleep(3)
+
+        # 2. Loop de Posts
+        quantidade_posts = 5
         
-        posts = profile.get_posts()
-        
-        for post in posts:
-            if count_posts >= max_posts:
-                break
-
-            # Pausa aleatória entre posts
-            tempo_pausa = random.randint(5, 15) 
-            print(f"   ⏳ Lendo post... aguardando {tempo_pausa}s")
-            time.sleep(tempo_pausa)
-
-            content_type = "image"
-            if post.is_video: content_type = "video"
-            elif post.typename == "GraphSidecar": content_type = "carousel"
-
-            # Coleta de Comentários (Limitada)
-            comentarios = []
-            max_comments = 20
-            count_comments = 0
+        for i in range(quantidade_posts):
+            print(f"   📸 Extraindo post {i+1}/{quantidade_posts}...")
+            
+            post_data = {
+                "descricao": "",
+                "likes": 0,
+                "comentarios_coletados": [],
+                "url": driver.current_url
+            }
 
             try:
-                for comentario in post.get_comments():
-                    if count_comments >= max_comments: break
-                    comentarios.append({
-                        "username": comentario.owner.username,
-                        "text": comentario.text,
-                        "created_at": comentario.created_at_utc.isoformat()
-                    })
-                    count_comments += 1
+                # Extrai a legenda (Descrição)
+                try:
+                    desc_el = driver.find_element(By.XPATH, "//h1")
+                    post_data["descricao"] = desc_el.text
+                except: pass
+
+                # Extrai as curtidas
+                try:
+                    likes_el = driver.find_element(By.XPATH, "//section//span[contains(text(), 'curtidas') or contains(text(), 'likes')]")
+                    texto_likes = likes_el.text.split(' ')[0].replace('.', '').replace(',', '')
+                    post_data["likes"] = int(texto_likes)
+                except: pass
+
+                # Coleta Comentários (Simples)
+                try:
+                    comentarios_el = driver.find_elements(By.XPATH, "//ul//li")
+                    for c_el in comentarios_el[:10]:
+                        texto_c = c_el.text
+                        linhas = texto_c.split('\n')
+                        if len(linhas) >= 2:
+                            post_data["comentarios_coletados"].append({
+                                "autor": linhas[0],
+                                "texto": linhas[1]
+                            })
+                except: pass
+
+                print(f"      ✅ Likes: {post_data['likes']} | Comentários: {len(post_data['comentarios_coletados'])}")
+                dados_finais["posts"].append(post_data)
+
             except Exception as e:
-                print(f"   ⚠️ Erro leve nos comentários: {e}")
+                print(f"      ⚠️ Erro na leitura do post: {e}")
 
-            post_data = {
-                "post_id": post.shortcode,
-                "post_url": f"https://www.instagram.com/p/{post.shortcode}/",
-                "publish_date": post.date_utc.isoformat(),
-                "content_type": content_type,
-                "caption": post.caption if post.caption else "",
-                "hashtags": post.caption_hashtags,
-                "metrics": {
-                    "likes_count": post.likes,
-                    "comments_count": post.comments,
-                    "views_count": post.video_view_count if post.is_video else 0
-                },
-                "comments": comentarios
-            }
-            
-            dados_coletados["posts"].append(post_data)
-            count_posts += 1
-            print(f"   ✅ Post {post.shortcode} coletado com {len(comentarios)} comentários")
-
-        return dados_coletados
+            # 3. Próximo Post (Clica na setinha para a direita)
+            if i < quantidade_posts - 1:
+                try:
+                    ActionChains(driver).send_keys(Keys.ARROW_RIGHT).perform()
+                    time.sleep(3)
+                except: break
+        
+        return dados_finais
 
     except Exception as e:
-        mensagem_erro = str(e)
-        print(f"❌ Ocorreu um erro no perfil {username}: {mensagem_erro}")
-        
-        # --- FREIO DE EMERGÊNCIA 🚨 ---
-        # Se o erro for de bloqueio, retorna um código especial para parar tudo
-        if "401" in mensagem_erro or "429" in mensagem_erro or "Redirected to login" in mensagem_erro:
-            return "BLOQUEIO_DETECTADO"
-            
+        print(f"❌ Erro geral: {e}")
         return None
 
-
-# --- 3. EXECUÇÃO EM LOTE ---
-
+# --- EXECUÇÃO PRINCIPAL ---
 if __name__ == "__main__":
-    diretorio_atual = os.path.dirname(os.path.abspath(__file__))
-    pasta_data = os.path.join(diretorio_atual, "..", "data")
-    caminho_csv = os.path.join(pasta_data, "famosos_instagram.csv")
+    driver = iniciar_driver()
+    try:
+        print("🍪 Injetando Cookies do Instagram...")
+        driver.get("https://www.instagram.com/")
+        time.sleep(2)
+        
+        diretorio_src = os.path.dirname(os.path.abspath(__file__))
+        caminho_cookie = os.path.join(diretorio_src, "config", "instagram", "logins_instagram", "instagram_cookies.pkl")
+        
+        try:
+            cookies = pickle.load(open(caminho_cookie, "rb"))
+            for cookie in cookies: driver.add_cookie(cookie)
+            driver.refresh()
+            time.sleep(4)
+        except: print("⚠️ AVISO: Sem cookies. Rodando deslogado (Alto risco de bloqueio).")
 
-    if not os.path.exists(pasta_data): os.makedirs(pasta_data)
-
-    if not os.path.exists(caminho_csv):
-        print(f"❌ ARQUIVO CSV NÃO ENCONTRADO EM: {caminho_csv}")
-    else:
-        with open(caminho_csv, "r", encoding="utf-8") as arquivo:
-            leitor = csv.DictReader(arquivo)
-            
-            if "nome_do_perfil" not in leitor.fieldnames:
-                print("❌ ERRO NO CSV: A primeira linha deve ser 'nome_do_perfil'.")
-            else:
+        pasta_data = os.path.join(diretorio_src, "..", "data")
+        caminho_csv = os.path.join(pasta_data, "famosos_instagram.csv")
+        
+        if os.path.exists(caminho_csv):
+            with open(caminho_csv, "r", encoding="utf-8") as arquivo:
+                leitor = csv.DictReader(arquivo)
                 for linha in leitor:
-                    perfil_alvo = linha["nome_do_perfil"].strip()
-                    if not perfil_alvo: continue
-
-                    print("\n==============================")
-                    print(f"📌 PROCESSANDO: {perfil_alvo}")
-                    print("==============================")
-
-                    resultado = extrair_dados_perfil(perfil_alvo)
-
-                    # --- VERIFICAÇÃO DO FREIO DE EMERGÊNCIA ---
-                    if resultado == "BLOQUEIO_DETECTADO":
-                        print("\n" + "█"*50)
-                        print("🚨 ALERTA MÁXIMO: INSTAGRAM BLOQUEOU TEMPORARIAMENTE 🚨")
-                        print("Motivo: Muitas requisições (Erro 401/429).")
-                        print("Ação: O script foi interrompido para proteger a conta.")
-                        print("Recomendação: Espere 2 a 4 horas antes de tentar de novo.")
-                        print("█"*50 + "\n")
-                        break # Encerra o loop e o programa
-
-                    if resultado:
-                        caminho_json = os.path.join(pasta_data, f"instagram_{perfil_alvo}_data.json")
-                        with open(caminho_json, 'w', encoding='utf-8') as f:
-                            json.dump(resultado, f, ensure_ascii=False, indent=4)
-                        print(f"✨ SUCESSO! Dados salvos em: {caminho_json}")
-                    
-                        tempo_descanso = random.randint(30, 60)
-                        print(f"💤 Descansando {tempo_descanso}s antes do próximo perfil...")
-                        time.sleep(tempo_descanso)
-                    else:
-                        print(f"⚠️ Pulanado {perfil_alvo} devido a erro.")
+                    perfil = linha["nome_do_perfil"].strip()
+                    if perfil:
+                        print(f"\n📌 PROCESSANDO: {perfil}")
+                        resultado = processar_perfil(driver, perfil)
+                        if resultado:
+                            caminho_json = os.path.join(pasta_data, f"instagram_{perfil}_data.json")
+                            with open(caminho_json, 'w', encoding='utf-8') as f:
+                                json.dump(resultado, f, ensure_ascii=False, indent=4)
+                            print("✨ JSON Salvo!")
+                            time.sleep(random.randint(15, 25))
+    finally:
+        driver.quit()
+        print("\n🏁 Fim.")

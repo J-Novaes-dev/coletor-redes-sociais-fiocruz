@@ -15,13 +15,13 @@ Projeto_Bolsa_Coleta/
 ├── src/                           # 📂 Códigos Fonte
 │   ├── config/                    # ⚙️ Configurações e Autenticação
 │   │   ├── instagram/             # Módulo Instagram
-│   │   │   ├── logins_instagram/  # (Automático) Onde as sessões são salvas
+│   │   │   ├── logins_instagram/  # (Automático) Onde os cookies do Insta são salvos
 │   │   │   └── setup_login_instagram.py
 │   │   └── tiktok/                # Módulo TikTok
-│   │   │   ├── logins_tiktok/     # (Automático) Onde os cookies são salvos
+│   │   │   ├── logins_tiktok/     # (Automático) Onde os cookies do TikTok são salvos
 │   │   │   └── setup_login_tiktok.py
-│   ├── coleta_instagram.py        # Robô principal do Instagram
-│   └── coleta_tiktok.py           # Robô principal do TikTok
+│   ├── coleta_instagram.py        # Robô principal do Instagram (Selenium)
+│   └── coleta_tiktok.py           # Robô principal do TikTok (Selenium)
 ├── requirements.txt               # Dependências do Python
 └── README.md                      # Documentação
 ```
@@ -29,9 +29,8 @@ Projeto_Bolsa_Coleta/
 ## 🛠️ Pré-requisitos
 
 * **Python 3.8+** instalado.
-* **Google Chrome** instalado (para o Selenium do TikTok).
-* Uma conta no Instagram (para autenticação).
-* Uma conta no TikTok (para autenticação via cookies).
+* **Google Chrome** instalado.
+* Uma conta no Instagram e no TikTok para autenticação (para evitar bloqueios).
 
 ## 🚀 Instalação
 
@@ -46,7 +45,7 @@ pip install -r requirements.txt
 
 ## ⚙️ Configuração Inicial (Faça apenas na 1ª vez)
 
-Antes de rodar os robôs, é necessário gerar os arquivos de autenticação para evitar bloqueios.
+Ambas as redes exigem uma autenticação inicial que salva os "cookies" do navegador para as próximas execuções.
 
 > **Importante:** Execute os comandos abaixo estando na raiz da pasta `src`.
 
@@ -56,8 +55,9 @@ Antes de rodar os robôs, é necessário gerar os arquivos de autenticação par
     ```bash
     python config/instagram/setup_login_instagram.py
     ```
-3.  Digite sua senha quando solicitado.
-    * *O arquivo de sessão será salvo automaticamente em `src/config/instagram/logins_instagram/`.*
+3.  Uma janela do Chrome abrirá. Faça o login na sua conta do Instagram.
+4.  Após a página do Feed carregar, volte ao terminal e aperte **ENTER**.
+    * *Isso salvará seus cookies em `src/config/instagram/logins_instagram/`.*
 
 ### 2. Configurar TikTok 🎵
 1.  Ainda na pasta `src`, execute o script de setup:
@@ -65,7 +65,7 @@ Antes de rodar os robôs, é necessário gerar os arquivos de autenticação par
     python config/tiktok/setup_login_tiktok.py
     ```
 2.  Uma janela do Chrome abrirá. **Faça o login manualmente** no TikTok (QR Code, Google, etc).
-3.  Após logar e ver a página inicial, volte ao terminal e aperte **ENTER**.
+3.  Após logar, volte ao terminal e aperte **ENTER**.
     * *Isso salvará seus cookies em `src/config/tiktok/logins_tiktok/`.*
 
 ---
@@ -73,37 +73,33 @@ Antes de rodar os robôs, é necessário gerar os arquivos de autenticação par
 ## ▶️ Como Usar
 
 ### 1. Preparar as Listas (Input)
-Na pasta `data/`, crie ou edite os arquivos CSV. A primeira linha **deve** ser o cabeçalho `nome_do_perfil`.
+Na pasta `data/`, edite os arquivos CSV. A primeira linha **deve** ser o cabeçalho `nome_do_perfil`.
 
 Exemplo (`data/famosos_instagram.csv`):
 ```csv
 nome_do_perfil
 neymarjr
 anitta
-cazetv
 ```
 
-### 2. Rodar o Coletor do Instagram
+### 2. Rodar o Coletor do Instagram ou TikTok
 No terminal, dentro da pasta `src`:
 ```bash
 python coleta_instagram.py
 ```
-* **O que ele faz:** Lê o CSV, coleta perfil, últimos posts, métricas e comentários limitados.
-* **Segurança:** Possui "freio de emergência" se detectar bloqueio 401/429.
-
-### 3. Rodar o Coletor do TikTok
-No terminal, dentro da pasta `src`:
+ou
 ```bash
 python coleta_tiktok.py
 ```
-* **O que ele faz:** Simula um navegador real, injeta cookies de login, clica nos vídeos e extrai likes, visualizações e textos dos comentários.
+* **O que eles fazem:** Simulam um navegador real, injetam os cookies de login, clicam nos vídeos/fotos e extraem descrições, likes e comentários.
+* **Segurança (Human-in-the-loop):** Se os sites pedirem Captcha ou Verificação de Segurança, o robô irá pausar, emitir um alerta sonoro e aguardar a intervenção humana para continuar.
 
 ---
 
 ## ⚠️ Notas Importantes & Troubleshooting
 
-* **Soft Ban (Instagram):** Se o script parar com erro `401 Unauthorized` ou `429 Too Many Requests`, o Instagram bloqueou temporariamente seu IP ou conta. **Pare por 2 a 24 horas**.
-* **Erro de Seletor (TikTok):** O TikTok muda o código do site frequentemente. Se os comentários vierem zerados, pode ser necessário atualizar os seletores CSS/XPath no código.
+* **Página Não Encontrada:** Se o script parar sem erro aparente, a conta alvo pode ser privada ou não existir.
+* **Atualização do Chrome:** O código usa o `webdriver_manager`, então o Chrome será atualizado automaticamente em segundo plano.
 * **Privacidade:** Os dados coletados são públicos. Este projeto deve ser usado estritamente para fins acadêmicos e éticos.
 
 ## 📝 Autoria
