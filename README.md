@@ -94,6 +94,23 @@ python coleta_tiktok.py
 * **O que eles fazem:** Simulam um navegador real, injetam os cookies de login, clicam nos vídeos/fotos e extraem descrições, likes e comentários.
 * **Segurança (Human-in-the-loop):** Se os sites pedirem Captcha ou Verificação de Segurança, o robô irá pausar, emitir um alerta sonoro e aguardar a intervenção humana para continuar.
 
+### 3. Análise de Sentimento
+
+No terminal, instale o Hugging Face:
+
+```bash
+python -m pip install huggingface_hub
+```
+
+Acesse https://huggingface.co/settings/tokens
+clique em New token
+Crie um token com permissão Read 
+Copie o token gerado e cole na variável "api_key" dentro de analise_sentimento.py
+
+Para rodar, no terminal, dentro da pasta `src`:
+```bash
+python analise_sentimento.py
+```
 ---
 
 ## ⚠️ Notas Importantes & Troubleshooting
