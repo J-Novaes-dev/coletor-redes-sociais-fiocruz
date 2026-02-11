@@ -6,12 +6,11 @@ from huggingface_hub import InferenceClient
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
-api_key = os.environ.get("HF_TOKEN")
 
 # Inicializa cliente HuggingFace
 client = InferenceClient(
     provider="hf-inference",
-    api_key=api_key,
+    api_key="",  # coloque seu token aqui
 )
 
 # Percorre todos os arquivos da pasta data
