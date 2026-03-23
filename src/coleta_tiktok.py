@@ -83,91 +83,94 @@ def extrair_comentarios(driver, max_comentarios=10):
     comentarios_coletados = []
     
     try:
-        print(f"      💬 Carregando comentários na tela...")
+        print(f"      💬 [DEBUG] Iniciando diagnóstico de comentários...")
         time.sleep(2) 
         
-        # 1. Definir o que estamos procurando
         xpath_busca = "//div[contains(@class, 'Comment') and contains(@class, 'Item')]"
         
-        # 2. O AQUECIMENTO DE TELA (Scroll Dinâmico)
-        # Queremos ter pelo menos 15 elementos no HTML para garantir 10 limpos
-        margem_seguranca = max_comentarios + 5 
+        # 1. VERIFICANDO O SCROLL
         tentativas_scroll = 0
-        
-        while tentativas_scroll < 5:
+        while tentativas_scroll < 4:
             elementos = driver.find_elements(By.XPATH, xpath_busca)
-            
             if len(elementos) == 0:
                 xpath_busca = "//div[contains(@class, 'Comment') and contains(@class, 'Content')]"
                 elementos = driver.find_elements(By.XPATH, xpath_busca)
+            
+            print(f"      🔍 [DEBUG] Scroll {tentativas_scroll}: {len(elementos)} blocos HTML na tela.")
                 
-            if len(elementos) == 0:
-                return [] # Vídeo realmente não tem comentários
+            if len(elementos) >= (max_comentarios + 3):
+                break
                 
-            if len(elementos) >= margem_seguranca:
-                break # Já temos elementos de sobra carregados!
-                
-            # Rola a tela até o ÚLTIMO comentário da lista atual para o TikTok carregar mais
-            try:
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", elementos[-1])
-                time.sleep(2) # Tempo vital pro TikTok renderizar os novos comentários
-            except:
-                pass
-                
+            if elementos:
+                try:
+                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", elementos[-1])
+                    time.sleep(1.5)
+                except: pass
             tentativas_scroll += 1
 
-        # 3. EXTRAÇÃO REAL
-        # Tira uma "foto" nova e atualizada com a lista grande
-        elementos_finais = driver.find_elements(By.XPATH, xpath_busca) 
+        # 2. A COLETA COM DIAGNÓSTICO
+        elementos_finais = driver.find_elements(By.XPATH, xpath_busca)
+        print(f"      📊 [DEBUG] Total de blocos encontrados para análise: {len(elementos_finais)}")
         
-        for i, el in enumerate(elementos_finais):
+        for index, el in enumerate(elementos_finais):
             if len(comentarios_coletados) >= max_comentarios:
-                break # Bateu os 10, para a coleta imediatamente.
+                break
+
+            print(f"      ➡️ Analisando bloco {index + 1}...")
 
             try:
-                # Garante que o elemento está visível antes de ler
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el)
-                time.sleep(0.5) 
+                time.sleep(0.3)
                 
-                texto_completo = el.text
-                if not texto_completo:
-                    texto_completo = driver.execute_script("return arguments[0].innerText;", el)
+                # Teste 1: O bloco tem texto visível?
+                texto_bloco_inteiro = el.text.strip()
+                if not texto_bloco_inteiro:
+                    print(f"         ❌ Falha: Bloco {index + 1} está vazio ou invisível.")
+                    continue
+                    
+                texto_comentario = ""
+                autor_comentario = "Desconhecido"
+                
+                # Teste 2: A tag <p> existe?
+                try:
+                    tag_p = el.find_element(By.TAG_NAME, "p")
+                    texto_comentario = tag_p.text.strip()
+                except Exception as e:
+                    print(f"         ⚠️ Aviso: Bloco {index + 1} não tem tag <p>. Tentando plano B...")
 
-                linhas = texto_completo.split('\n')
-                linhas = [L.strip() for L in linhas if L.strip()] 
+                linhas = [L.strip() for L in texto_bloco_inteiro.split('\n') if L.strip()]
+                if linhas:
+                    autor_comentario = linhas[0]
+                    if "·" in autor_comentario:
+                        autor_comentario = autor_comentario.split('·')[0].strip()
 
-                autor = "Desconhecido"
-                texto = ""
+                # Plano B: Pegar a segunda linha
+                if not texto_comentario and len(linhas) >= 2:
+                    texto_comentario = linhas[1]
+                    print(f"         ⚠️ Aviso: Bloco {index + 1} usou a segunda linha como texto.")
 
-                if len(linhas) >= 2:
-                    autor = linhas[0]
-                    texto = linhas[-1]
-                    if len(texto) < 3 and len(linhas) > 2: 
-                        texto = linhas[-2]
-                elif len(linhas) == 1:
-                    try:
-                        p_texto = el.find_element(By.TAG_NAME, 'p').text
-                        texto = p_texto
-                        if linhas[0] != p_texto:
-                            autor = linhas[0]
-                    except:
-                        texto = linhas[0]
+                # Teste 3: Conseguimos algum texto no final das contas?
+                if not texto_comentario:
+                     print(f"         ❌ Falha: Bloco {index + 1} não resultou em nenhum texto útil.")
+                     continue
 
-                if "·" in autor:
-                    autor = autor.split('·')[0].strip()
+                # Se passou por tudo, é sucesso!
+                comentarios_coletados.append({
+                    "autor": autor_comentario,
+                    "texto": texto_comentario
+                })
+                print(f"         ✅ Sucesso! Adicionado ({len(comentarios_coletados)}/{max_comentarios})")
 
-                # Se achou texto válido, coloca na sacola
-                if texto: 
-                    comentarios_coletados.append({
-                        "autor": autor,
-                        "texto": texto
-                    })
             except Exception as e:
+                # Teste 4: Ocorreu um erro catastrófico (ex: StaleElementReference)
+                tipo_erro = type(e).__name__
+                print(f"         ❌ Erro Crítico no bloco {index + 1}: {tipo_erro}")
                 continue
 
     except Exception as e:
-        print(f"      ⚠️ Erro: {e}")
+        print(f"      ⚠️ Erro geral na extração: {e}")
 
+    print(f"      🏁 [DEBUG] Fim da coleta. Total capturado: {len(comentarios_coletados)}.")
     return comentarios_coletados
 
 def processar_perfil(driver, perfil_alvo):
