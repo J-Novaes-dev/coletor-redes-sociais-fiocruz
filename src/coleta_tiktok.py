@@ -83,36 +83,51 @@ def extrair_comentarios(driver, max_comentarios=10):
     comentarios_coletados = []
     
     try:
-        print(f"      💬 Buscando comentários...")
-        
-        # Opcional: Um leve empurrão na tela para garantir que o TikTok carregue mais de 8 comentários iniciais
-        try:
-            area_comentarios = driver.find_element(By.CSS_SELECTOR, '[data-e2e="search-comment-container"]')
-            driver.execute_script("arguments[0].scrollTop += 500;", area_comentarios)
-        except: pass
-
+        print(f"      💬 Carregando comentários na tela...")
         time.sleep(2) 
         
-        # Busca os elementos
+        # 1. Definir o que estamos procurando
         xpath_busca = "//div[contains(@class, 'Comment') and contains(@class, 'Item')]"
-        elementos = driver.find_elements(By.XPATH, xpath_busca)
         
-        if len(elementos) == 0:
-            xpath_busca = "//div[contains(@class, 'Comment') and contains(@class, 'Content')]"
+        # 2. O AQUECIMENTO DE TELA (Scroll Dinâmico)
+        # Queremos ter pelo menos 15 elementos no HTML para garantir 10 limpos
+        margem_seguranca = max_comentarios + 5 
+        tentativas_scroll = 0
+        
+        while tentativas_scroll < 5:
             elementos = driver.find_elements(By.XPATH, xpath_busca)
-
-        if len(elementos) == 0:
-            return []
-
-        # MUDANÇA AQUI: Tiramos o "[:max_comentarios]". Vamos avaliar TODOS os elementos encontrados.
-        for i, el in enumerate(elementos):
             
-            # Se a nossa lista de salvos já bateu o limite, paramos o loop imediatamente.
+            if len(elementos) == 0:
+                xpath_busca = "//div[contains(@class, 'Comment') and contains(@class, 'Content')]"
+                elementos = driver.find_elements(By.XPATH, xpath_busca)
+                
+            if len(elementos) == 0:
+                return [] # Vídeo realmente não tem comentários
+                
+            if len(elementos) >= margem_seguranca:
+                break # Já temos elementos de sobra carregados!
+                
+            # Rola a tela até o ÚLTIMO comentário da lista atual para o TikTok carregar mais
+            try:
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", elementos[-1])
+                time.sleep(2) # Tempo vital pro TikTok renderizar os novos comentários
+            except:
+                pass
+                
+            tentativas_scroll += 1
+
+        # 3. EXTRAÇÃO REAL
+        # Tira uma "foto" nova e atualizada com a lista grande
+        elementos_finais = driver.find_elements(By.XPATH, xpath_busca) 
+        
+        for i, el in enumerate(elementos_finais):
             if len(comentarios_coletados) >= max_comentarios:
-                break
+                break # Bateu os 10, para a coleta imediatamente.
 
             try:
+                # Garante que o elemento está visível antes de ler
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el)
+                time.sleep(0.5) 
                 
                 texto_completo = el.text
                 if not texto_completo:
@@ -127,10 +142,8 @@ def extrair_comentarios(driver, max_comentarios=10):
                 if len(linhas) >= 2:
                     autor = linhas[0]
                     texto = linhas[-1]
-                    
                     if len(texto) < 3 and len(linhas) > 2: 
                         texto = linhas[-2]
-
                 elif len(linhas) == 1:
                     try:
                         p_texto = el.find_element(By.TAG_NAME, 'p').text
@@ -143,14 +156,13 @@ def extrair_comentarios(driver, max_comentarios=10):
                 if "·" in autor:
                     autor = autor.split('·')[0].strip()
 
-                # Só adiciona se realmente achou um texto válido
+                # Se achou texto válido, coloca na sacola
                 if texto: 
                     comentarios_coletados.append({
                         "autor": autor,
                         "texto": texto
                     })
             except Exception as e:
-                # Se esse bloco HTML falhar, ele não conta no limite. O loop continua para o próximo.
                 continue
 
     except Exception as e:
