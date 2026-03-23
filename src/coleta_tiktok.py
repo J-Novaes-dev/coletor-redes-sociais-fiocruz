@@ -85,9 +85,16 @@ def extrair_comentarios(driver, max_comentarios=10):
     try:
         print(f"      💬 Buscando comentários...")
         
+        # Opcional: Um leve empurrão na tela para garantir que o TikTok carregue mais de 8 comentários iniciais
+        try:
+            area_comentarios = driver.find_element(By.CSS_SELECTOR, '[data-e2e="search-comment-container"]')
+            driver.execute_script("arguments[0].scrollTop += 500;", area_comentarios)
+        except: pass
+
+        time.sleep(2) 
+        
         # Busca os elementos
         xpath_busca = "//div[contains(@class, 'Comment') and contains(@class, 'Item')]"
-        time.sleep(2) 
         elementos = driver.find_elements(By.XPATH, xpath_busca)
         
         if len(elementos) == 0:
@@ -97,18 +104,20 @@ def extrair_comentarios(driver, max_comentarios=10):
         if len(elementos) == 0:
             return []
 
-        for i, el in enumerate(elementos[:max_comentarios]):
+        # MUDANÇA AQUI: Tiramos o "[:max_comentarios]". Vamos avaliar TODOS os elementos encontrados.
+        for i, el in enumerate(elementos):
+            
+            # Se a nossa lista de salvos já bateu o limite, paramos o loop imediatamente.
+            if len(comentarios_coletados) >= max_comentarios:
+                break
+
             try:
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el)
                 
-                # Pega TODO o texto visível dentro do quadrado do comentário
                 texto_completo = el.text
-                
-                # Se estiver vazio, tenta forçar via JS (backup)
                 if not texto_completo:
                     texto_completo = driver.execute_script("return arguments[0].innerText;", el)
 
-                # Separa por linhas e remove vazias
                 linhas = texto_completo.split('\n')
                 linhas = [L.strip() for L in linhas if L.strip()] 
 
@@ -116,16 +125,13 @@ def extrair_comentarios(driver, max_comentarios=10):
                 texto = ""
 
                 if len(linhas) >= 2:
-                    # Lógica: Linha 1 = Autor | Última Linha = Texto
                     autor = linhas[0]
                     texto = linhas[-1]
                     
-                    # Ajuste para casos onde a última linha é data (ex: "2h")
                     if len(texto) < 3 and len(linhas) > 2: 
                         texto = linhas[-2]
 
                 elif len(linhas) == 1:
-                    # Se só tem uma linha, tentamos ver se é diferente do <p> interno
                     try:
                         p_texto = el.find_element(By.TAG_NAME, 'p').text
                         texto = p_texto
@@ -134,16 +140,17 @@ def extrair_comentarios(driver, max_comentarios=10):
                     except:
                         texto = linhas[0]
 
-                # Limpeza de sufixos comuns (ex: "João · Criador")
                 if "·" in autor:
                     autor = autor.split('·')[0].strip()
 
+                # Só adiciona se realmente achou um texto válido
                 if texto: 
                     comentarios_coletados.append({
                         "autor": autor,
                         "texto": texto
                     })
             except Exception as e:
+                # Se esse bloco HTML falhar, ele não conta no limite. O loop continua para o próximo.
                 continue
 
     except Exception as e:
