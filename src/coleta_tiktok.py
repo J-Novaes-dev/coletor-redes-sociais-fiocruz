@@ -81,24 +81,21 @@ def verificar_bloqueios(driver):
 
 def extrair_comentarios(driver, max_comentarios=10):
     comentarios_coletados = []
+    xpath_busca = "//div[contains(@class, 'Comment') and contains(@class, 'Item')]"
     
     try:
-        print(f"      💬 [DEBUG] Iniciando diagnóstico de comentários...")
+        print(f"      💬 Carregando área de comentários...")
         time.sleep(2) 
         
-        xpath_busca = "//div[contains(@class, 'Comment') and contains(@class, 'Item')]"
-        
-        # 1. VERIFICANDO O SCROLL
+        # 1. AQUECIMENTO (Garante que tem pelo menos uns 15 na tela)
         tentativas_scroll = 0
         while tentativas_scroll < 4:
             elementos = driver.find_elements(By.XPATH, xpath_busca)
-            if len(elementos) == 0:
+            if not elementos:
                 xpath_busca = "//div[contains(@class, 'Comment') and contains(@class, 'Content')]"
                 elementos = driver.find_elements(By.XPATH, xpath_busca)
-            
-            print(f"      🔍 [DEBUG] Scroll {tentativas_scroll}: {len(elementos)} blocos HTML na tela.")
                 
-            if len(elementos) >= (max_comentarios + 3):
+            if len(elementos) >= (max_comentarios + 5):
                 break
                 
             if elementos:
@@ -108,35 +105,35 @@ def extrair_comentarios(driver, max_comentarios=10):
                 except: pass
             tentativas_scroll += 1
 
-        # 2. A COLETA COM DIAGNÓSTICO
-        elementos_finais = driver.find_elements(By.XPATH, xpath_busca)
-        print(f"      📊 [DEBUG] Total de blocos encontrados para análise: {len(elementos_finais)}")
+        # 2. A COLETA ANTI-STALE
+        index_atual = 0 # Qual comentário estamos lendo agora
+        falhas_consecutivas = 0 # Pra não ficar em loop infinito se a página quebrar de vez
         
-        for index, el in enumerate(elementos_finais):
-            if len(comentarios_coletados) >= max_comentarios:
-                break
+        while len(comentarios_coletados) < max_comentarios and falhas_consecutivas < 5:
+            # SEMPRE busca a lista fresca antes de interagir
+            elementos_frescos = driver.find_elements(By.XPATH, xpath_busca)
+            
+            # Se o index passou do total de elementos que existem, acabou a lista
+            if index_atual >= len(elementos_frescos):
+                break 
 
-            print(f"      ➡️ Analisando bloco {index + 1}...")
-
+            el = elementos_frescos[index_atual]
+            
             try:
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el)
                 time.sleep(0.3)
                 
-                # Teste 1: O bloco tem texto visível?
                 texto_bloco_inteiro = el.text.strip()
                 if not texto_bloco_inteiro:
-                    print(f"         ❌ Falha: Bloco {index + 1} está vazio ou invisível.")
+                    index_atual += 1
                     continue
                     
                 texto_comentario = ""
                 autor_comentario = "Desconhecido"
                 
-                # Teste 2: A tag <p> existe?
                 try:
-                    tag_p = el.find_element(By.TAG_NAME, "p")
-                    texto_comentario = tag_p.text.strip()
-                except Exception as e:
-                    print(f"         ⚠️ Aviso: Bloco {index + 1} não tem tag <p>. Tentando plano B...")
+                    texto_comentario = el.find_element(By.TAG_NAME, "p").text.strip()
+                except: pass
 
                 linhas = [L.strip() for L in texto_bloco_inteiro.split('\n') if L.strip()]
                 if linhas:
@@ -144,33 +141,28 @@ def extrair_comentarios(driver, max_comentarios=10):
                     if "·" in autor_comentario:
                         autor_comentario = autor_comentario.split('·')[0].strip()
 
-                # Plano B: Pegar a segunda linha
                 if not texto_comentario and len(linhas) >= 2:
                     texto_comentario = linhas[1]
-                    print(f"         ⚠️ Aviso: Bloco {index + 1} usou a segunda linha como texto.")
 
-                # Teste 3: Conseguimos algum texto no final das contas?
-                if not texto_comentario:
-                     print(f"         ❌ Falha: Bloco {index + 1} não resultou em nenhum texto útil.")
-                     continue
-
-                # Se passou por tudo, é sucesso!
-                comentarios_coletados.append({
-                    "autor": autor_comentario,
-                    "texto": texto_comentario
-                })
-                print(f"         ✅ Sucesso! Adicionado ({len(comentarios_coletados)}/{max_comentarios})")
+                if texto_comentario:
+                    comentarios_coletados.append({
+                        "autor": autor_comentario,
+                        "texto": texto_comentario
+                    })
+                    falhas_consecutivas = 0 # Reseta as falhas se deu certo
+                
+                # Avança para o próximo bloco independente do resultado (se tentou ler, segue em frente)
+                index_atual += 1 
 
             except Exception as e:
-                # Teste 4: Ocorreu um erro catastrófico (ex: StaleElementReference)
-                tipo_erro = type(e).__name__
-                print(f"         ❌ Erro Crítico no bloco {index + 1}: {tipo_erro}")
-                continue
+                # SE DEU O ERRO STALE, não avança o index! Apenas adiciona falha.
+                # No próximo giro do 'while', ele vai buscar a lista fresca e tentar o mesmo index de novo.
+                falhas_consecutivas += 1
+                time.sleep(0.5)
 
     except Exception as e:
         print(f"      ⚠️ Erro geral na extração: {e}")
 
-    print(f"      🏁 [DEBUG] Fim da coleta. Total capturado: {len(comentarios_coletados)}.")
     return comentarios_coletados
 
 def processar_perfil(driver, perfil_alvo):
