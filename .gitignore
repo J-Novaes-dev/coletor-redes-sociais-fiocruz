@@ -10,6 +10,7 @@ env/
 
 # --- Ignorar Dados Coletados (JSONs pesados) ---
 data/*.json
+data/coleta_curta_do_tiktok/
 
 # --- 🚨 IGNORAR CREDENCIAIS E SESSÕES (CRÍTICO) ---
 # Ignora a pasta de logins do Instagram
