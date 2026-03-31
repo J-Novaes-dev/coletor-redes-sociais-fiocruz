@@ -5,7 +5,8 @@ import pickle
 import platform
 import csv
 import random
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -13,6 +14,44 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from webdriver_manager.chrome import ChromeDriverManager
+
+def converter_data_tiktok(texto):
+    """Busca agressivamente padrões de data no texto (ex: 2d, 3w, 02-25, 2023-10-25)"""
+    if not texto: return datetime.now()
+    texto = texto.lower().strip()
+    hoje = datetime.now()
+    
+    try:
+        # 1. Busca datas antigas (YYYY-MM-DD)
+        match_ano = re.search(r'(\d{4})\s*-\s*(\d{1,2})\s*-\s*(\d{1,2})', texto)
+        if match_ano:
+            return datetime(int(match_ano.group(1)), int(match_ano.group(2)), int(match_ano.group(3)))
+
+        # 2. Busca datas do ano atual (MM-DD ou DD-MM) como "02 - 25" ou "02-25"
+        match_mes = re.search(r'(\d{1,2})\s*-\s*(\d{1,2})', texto)
+        if match_mes:
+            n1, n2 = int(match_mes.group(1)), int(match_mes.group(2))
+            mes, dia = (n1, n2) if n1 <= 12 else (n2, n1) # Descobre quem é o mês e quem é o dia
+            return datetime(hoje.year, mes, dia)
+
+        # 3. Busca dias ou semanas atrás (ex: "2d", "2 d", "3w", "3 sem")
+        match_relativo = re.search(r'(\d+)\s*(d|w|dia|sem)', texto)
+        if match_relativo:
+            qtd = int(match_relativo.group(1))
+            unidade = match_relativo.group(2)
+            if 'w' in unidade or 'sem' in unidade:
+                return hoje - timedelta(weeks=qtd)
+            else:
+                return hoje - timedelta(days=qtd)
+        
+        # 4. Horas/minutos (praticamente hoje)
+        if re.search(r'\d+\s*(h|m|s)', texto) or 'agora' in texto:
+            return hoje
+            
+    except Exception as e:
+        print(f"      ⚠️ Erro ao converter data '{texto}': {e}")
+        
+    return hoje
 
 def converter_numero(texto):
     if not texto: return 0
@@ -61,7 +100,6 @@ def verificar_bloqueios(driver):
 
         # 2. Verifica Texto VISÍVEL (não o código fonte oculto)
         try:
-            # Pega apenas o texto que o usuário vê
             texto_visivel = driver.find_element(By.TAG_NAME, "body").text.lower()
             indicadores = ["verify to continue", "arraste o controle", "rotate the image", "verificação de segurança"]
             
@@ -79,17 +117,18 @@ def verificar_bloqueios(driver):
     
     return False
 
-def extrair_comentarios(driver, max_comentarios=10):
+def extrair_comentarios(driver, max_comentarios=50):
     comentarios_coletados = []
     xpath_busca = "//div[contains(@class, 'Comment') and contains(@class, 'Item')]"
     
     try:
-        print(f"      💬 Carregando área de comentários...")
+        print(f"      💬 Carregando até {max_comentarios} comentários...")
         time.sleep(2) 
         
-        # 1. AQUECIMENTO (Garante que tem pelo menos uns 15 na tela)
+        # 1. AQUECIMENTO (Garante que tem pelo menos o suficiente na tela)
+        # 10 tentativas de scroll para alcançar os 50
         tentativas_scroll = 0
-        while tentativas_scroll < 4:
+        while tentativas_scroll < 10:
             elementos = driver.find_elements(By.XPATH, xpath_busca)
             if not elementos:
                 xpath_busca = "//div[contains(@class, 'Comment') and contains(@class, 'Content')]"
@@ -101,19 +140,17 @@ def extrair_comentarios(driver, max_comentarios=10):
             if elementos:
                 try:
                     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", elementos[-1])
-                    time.sleep(1.5)
+                    time.sleep(2.0)
                 except: pass
             tentativas_scroll += 1
 
         # 2. A COLETA ANTI-STALE
-        index_atual = 0 # Qual comentário estamos lendo agora
-        falhas_consecutivas = 0 # Pra não ficar em loop infinito se a página quebrar de vez
+        index_atual = 0
+        falhas_consecutivas = 0
         
         while len(comentarios_coletados) < max_comentarios and falhas_consecutivas < 5:
-            # SEMPRE busca a lista fresca antes de interagir
             elementos_frescos = driver.find_elements(By.XPATH, xpath_busca)
             
-            # Se o index passou do total de elementos que existem, acabou a lista
             if index_atual >= len(elementos_frescos):
                 break 
 
@@ -149,14 +186,11 @@ def extrair_comentarios(driver, max_comentarios=10):
                         "autor": autor_comentario,
                         "texto": texto_comentario
                     })
-                    falhas_consecutivas = 0 # Reseta as falhas se deu certo
+                    falhas_consecutivas = 0 
                 
-                # Avança para o próximo bloco independente do resultado (se tentou ler, segue em frente)
                 index_atual += 1 
 
             except Exception as e:
-                # SE DEU O ERRO STALE, não avança o index! Apenas adiciona falha.
-                # No próximo giro do 'while', ele vai buscar a lista fresca e tentar o mesmo index de novo.
                 falhas_consecutivas += 1
                 time.sleep(0.5)
 
@@ -178,30 +212,22 @@ def processar_perfil(driver, perfil_alvo):
         driver.get(url_perfil)
         time.sleep(4) 
 
-        # 1. Verifica Captcha logo na entrada
         verificar_bloqueios(driver)
 
-        # 2. Verifica Vídeos
         videos_na_tela = driver.find_elements(By.CSS_SELECTOR, '[data-e2e="user-post-item"]')
         
-        # --- PAUSA DE SEGURANÇA (Se não achar vídeos) ---
         if len(videos_na_tela) == 0:
             print(f"\n⚠️ AVISO: Não encontrei vídeos em @{perfil_alvo}.")
-            print("   Motivos: Captcha não detectado, internet lenta ou perfil vazio.")
-            
-            # Aqui está a "Segunda Chance" que você concordou em manter
             print("🛑 PAUSANDO PARA AJUDA HUMANA.")
             print("👉 AÇÃO: Se a página não carregou, dê F5. Se tem Captcha, resolva.")
             input("👉 DEPOIS: Aperte [ENTER] para o robô tentar buscar os vídeos de novo...")
             
             time.sleep(3)
-            # Tenta buscar de novo após sua ajuda
             videos_na_tela = driver.find_elements(By.CSS_SELECTOR, '[data-e2e="user-post-item"]')
             
             if len(videos_na_tela) == 0:
                 print(f"❌ Ainda sem vídeos. Pulando @{perfil_alvo}...")
                 return None
-        # -----------------------------------------------
 
         print("👆 Abrindo primeiro vídeo...")
         try:
@@ -211,14 +237,40 @@ def processar_perfil(driver, perfil_alvo):
             print(f"❌ Erro ao clicar: {e}")
             return None
 
-        quantidade_videos = 5
-        for i in range(quantidade_videos):
-            print(f"   🎥 Extraindo vídeo {i+1}/{quantidade_videos}...")
-            video_data = {"descricao": "", "stats": {"likes": 0, "comments": 0, "shares": 0}, "comentarios_coletados": [], "url": driver.current_url}
+        # Limite da Fiocruz definido para 60 dias (Altere aqui se precisar)
+        dias_limite = 60
+        data_limite = datetime.now() - timedelta(days=dias_limite)
+        print(f"   📅 O robô vai coletar tudo publicado APÓS: {data_limite.strftime('%d/%m/%Y')}")
+
+        contador_video = 0
+        
+        while True:
+            contador_video += 1
+            print(f"   🎥 Extraindo vídeo {contador_video}...")
+            
+            video_data = {"descricao": "", "data_publicacao": "", "stats": {"likes": 0, "comments": 0, "shares": 0}, "comentarios_coletados": [], "url": driver.current_url}
 
             try:
                 try: driver.find_element(By.CSS_SELECTOR, '[data-e2e="modal-close-inner-button"]').click()
                 except: pass
+
+                try:
+                    elemento_nome = driver.find_element(By.CSS_SELECTOR, '[data-e2e="browse-username"]')
+                    texto_bruto = driver.execute_script("return arguments[0].parentNode.innerText;", elemento_nome)
+                    
+                    data_do_video = converter_data_tiktok(texto_bruto)
+                    video_data["data_publicacao"] = data_do_video.strftime('%d/%m/%Y')
+                except Exception as e:
+                    data_do_video = datetime.now()
+                    video_data["data_publicacao"] = "Desconhecida"
+                    texto_bruto = "Erro de leitura"
+                
+                texto_limpo_print = texto_bruto.replace('\n', ' ').strip()
+                print(f"      🕒 Data: {video_data['data_publicacao']} | Lendo de: '{texto_limpo_print}'")
+                
+                if data_do_video < data_limite and contador_video > 3:
+                    print(f"      🛑 Limite de {dias_limite} dias alcançado! Parando a coleta neste perfil.")
+                    break 
 
                 try: video_data["descricao"] = driver.find_element(By.CSS_SELECTOR, '[data-e2e="browse-video-desc"]').text
                 except: pass
@@ -229,18 +281,21 @@ def processar_perfil(driver, perfil_alvo):
                 try: video_data["stats"]["shares"] = converter_numero(driver.find_element(By.CSS_SELECTOR, '[data-e2e="share-count"]').text)
                 except: pass
 
+                # Aqui garantimos que o extrator seja chamado buscando os 50
                 if video_data["stats"]["comments"] > 0:
-                    video_data["comentarios_coletados"] = extrair_comentarios(driver, max_comentarios=10)
+                    video_data["comentarios_coletados"] = extrair_comentarios(driver, max_comentarios=50)
 
                 print(f"      ✅ Likes: {video_data['stats']['likes']} | Comentários: {len(video_data['comentarios_coletados'])}")
                 dados_finais["videos"].append(video_data)
+                
             except Exception as e:
                 print(f"      ⚠️ Erro no vídeo: {e}")
 
-            if i < quantidade_videos - 1:
-                try: driver.find_element(By.CSS_SELECTOR, '[data-e2e="arrow-right"]').click()
-                except: ActionChains(driver).send_keys(Keys.ARROW_DOWN).perform()
-                time.sleep(2.5)
+            try: 
+                driver.find_element(By.CSS_SELECTOR, '[data-e2e="arrow-right"]').click()
+            except: 
+                ActionChains(driver).send_keys(Keys.ARROW_DOWN).perform()
+            time.sleep(2.5)
         
         return dados_finais
 
