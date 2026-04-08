@@ -85,70 +85,80 @@ def verificar_bloqueios(driver):
     except: pass
     return False
 
-def extrair_comentarios(driver, max_comentarios=50):
+def extrair_comentarios(driver, total_post, max_comentarios=50):
     comentarios_coletados = []
+    textos_vistos = set() # "Memória" do robô para evitar repetições
+    
     xpath_busca = "//div[contains(@class, 'Comment') and contains(@class, 'Item')]"
     
+    meta_real = min(max_comentarios, total_post)
+    if meta_real == 0:
+        return []
+
     try:
-        print(f"      💬 Carregando até {max_comentarios} comentários...")
+        print(f"      💬 Extraindo comentários (Meta inteligente: {meta_real})...")
         time.sleep(2) 
         
-        tentativas_scroll = 0
-        while tentativas_scroll < 10:
+        tentativas_sem_novos = 0
+        
+        # Loop principal: Rola e lê ao mesmo tempo!
+        while len(comentarios_coletados) < meta_real and tentativas_sem_novos < 5:
             elementos = driver.find_elements(By.XPATH, xpath_busca)
-            if not elementos:
+            if not elementos: 
                 xpath_busca = "//div[contains(@class, 'Comment') and contains(@class, 'Content')]"
                 elementos = driver.find_elements(By.XPATH, xpath_busca)
-                
-            if len(elementos) >= (max_comentarios + 5): break
-                
-            if elementos:
-                try:
-                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", elementos[-1])
-                    time.sleep(2.0)
-                except: pass
-            tentativas_scroll += 1
 
-        index_atual = 0
-        falhas_consecutivas = 0
-        
-        while len(comentarios_coletados) < max_comentarios and falhas_consecutivas < 5:
-            elementos_frescos = driver.find_elements(By.XPATH, xpath_busca)
-            if index_atual >= len(elementos_frescos): break 
-
-            el = elementos_frescos[index_atual]
+            novos_nesta_rodada = 0
             
-            try:
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el)
-                time.sleep(0.3)
-                texto_bloco = el.text.strip()
-                if not texto_bloco:
-                    index_atual += 1
-                    continue
+            for el in elementos:
+                if len(comentarios_coletados) >= meta_real:
+                    break # Bateu a meta, interrompe a leitura na hora
                     
-                texto_comentario = ""
-                autor_comentario = "Desconhecido"
-                
-                try: texto_comentario = el.find_element(By.TAG_NAME, "p").text.strip()
+                try:
+                    texto_bloco = el.text.strip()
+                    
+                    # Se o bloco tá vazio ou o robô já leu esse comentário antes, ignora e vai pro próximo
+                    if not texto_bloco or texto_bloco in textos_vistos:
+                        continue
+                        
+                    texto_comentario = ""
+                    autor_comentario = "Desconhecido"
+                    
+                    # Tenta extrair o texto específico
+                    try: texto_comentario = el.find_element(By.TAG_NAME, "p").text.strip()
+                    except: pass
+
+                    linhas = [L.strip() for L in texto_bloco.split('\n') if L.strip()]
+                    if linhas:
+                        autor_comentario = linhas[0].split('·')[0].strip()
+
+                    if not texto_comentario and len(linhas) >= 2:
+                        texto_comentario = linhas[1]
+
+                    if texto_comentario:
+                        comentarios_coletados.append({"autor": autor_comentario, "texto": texto_comentario})
+                        textos_vistos.add(texto_bloco) # Salva na memória pra não ler duplicado depois
+                        novos_nesta_rodada += 1
+                except:
+                    pass # Se o elemento sumir (StaleElement), ignora e segue
+
+            # Lógica de fim de lista: Se ele leu a tela toda e não achou NADA novo, força a descida
+            if novos_nesta_rodada == 0:
+                tentativas_sem_novos += 1
+                try:
+                    if elementos:
+                        # Rola a tela usando o último elemento visto para puxar mais dados
+                        driver.execute_script("arguments[0].scrollIntoView(false);", elementos[-1])
                 except: pass
+            else:
+                # Se achou algo novo, zera o contador de falhas
+                tentativas_sem_novos = 0
+                
+            time.sleep(1.5) # Respira para a página carregar a próxima leva
 
-                linhas = [L.strip() for L in texto_bloco.split('\n') if L.strip()]
-                if linhas:
-                    autor_comentario = linhas[0].split('·')[0].strip()
+    except Exception as e:
+        print(f"      ⚠️ Erro geral na extração: {e}")
 
-                if not texto_comentario and len(linhas) >= 2:
-                    texto_comentario = linhas[1]
-
-                if texto_comentario:
-                    comentarios_coletados.append({"autor": autor_comentario, "texto": texto_comentario})
-                    falhas_consecutivas = 0 
-                index_atual += 1 
-
-            except:
-                falhas_consecutivas += 1
-                time.sleep(0.5)
-
-    except Exception as e: print(f"      ⚠️ Erro geral na extração: {e}")
     return comentarios_coletados
 
 def processar_perfil(driver, perfil_alvo):
@@ -170,9 +180,14 @@ def processar_perfil(driver, perfil_alvo):
             if len(videos_na_tela) == 0: return None
 
         print("👆 Abrindo primeiro vídeo...")
-        videos_na_tela[0].click()
-        time.sleep(3)
+        try:
+            videos_na_tela[0].click()
+            time.sleep(3)
+        except Exception as e:
+            print(f"❌ Erro ao clicar: {e}")
+            return None
 
+        # Limite da Fiocruz definido para 60 dias
         dias_limite = 60
         data_limite = datetime.now() - timedelta(days=dias_limite)
         print(f"   📅 Coletando APÓS: {data_limite.strftime('%d/%m/%Y')}")
@@ -211,10 +226,11 @@ def processar_perfil(driver, perfil_alvo):
                 try: video_data["stats"]["shares"] = converter_numero(driver.find_element(By.CSS_SELECTOR, '[data-e2e="share-count"]').text)
                 except: pass
 
+                # Chamada inteligente usando os dados do stats
                 if video_data["stats"]["comments"] > 0:
-                    video_data["comentarios_coletados"] = extrair_comentarios(driver, max_comentarios=50)
+                    video_data["comentarios_coletados"] = extrair_comentarios(driver, total_post=video_data["stats"]["comments"], max_comentarios=50)
 
-                print(f"      ✅ Likes: {video_data['stats']['likes']} | Comentários: {len(video_data['comentarios_coletados'])}")
+                print(f"      ✅ Likes: {video_data['stats']['likes']} | Comentários Extraídos: {len(video_data['comentarios_coletados'])}")
                 dados_finais["videos"].append(video_data)
                 
             except Exception as e: print(f"      ⚠️ Erro no vídeo: {e}")
@@ -247,7 +263,7 @@ if __name__ == "__main__":
         # --- NOVA ORGANIZAÇÃO DE PASTAS ---
         pasta_data = os.path.join(diretorio_src, "..", "data")
         pasta_json_tiktok = os.path.join(pasta_data, "dados_tiktok")
-        os.makedirs(pasta_json_tiktok, exist_ok=True) # Cria a pasta dados_tiktok automaticamente!
+        os.makedirs(pasta_json_tiktok, exist_ok=True) 
 
         caminho_csv = os.path.join(pasta_data, "famosos_tiktok.csv")
         
@@ -259,7 +275,6 @@ if __name__ == "__main__":
                         print(f"\n📌 PROCESSANDO TIKTOK: {perfil}")
                         resultado = processar_perfil(driver, perfil)
                         if resultado:
-                            # Salva o arquivo dentro da nova subpasta
                             caminho_json = os.path.join(pasta_json_tiktok, f"tiktok_{perfil}_data.json")
                             with open(caminho_json, 'w', encoding='utf-8') as f:
                                 json.dump(resultado, f, ensure_ascii=False, indent=4)
