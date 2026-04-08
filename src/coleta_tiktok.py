@@ -22,35 +22,27 @@ def converter_data_tiktok(texto):
     hoje = datetime.now()
     
     try:
-        # 1. Busca datas antigas (YYYY-MM-DD)
         match_ano = re.search(r'(\d{4})\s*-\s*(\d{1,2})\s*-\s*(\d{1,2})', texto)
         if match_ano:
             return datetime(int(match_ano.group(1)), int(match_ano.group(2)), int(match_ano.group(3)))
 
-        # 2. Busca datas do ano atual (MM-DD ou DD-MM) como "02 - 25" ou "02-25"
         match_mes = re.search(r'(\d{1,2})\s*-\s*(\d{1,2})', texto)
         if match_mes:
             n1, n2 = int(match_mes.group(1)), int(match_mes.group(2))
-            mes, dia = (n1, n2) if n1 <= 12 else (n2, n1) # Descobre quem é o mês e quem é o dia
+            mes, dia = (n1, n2) if n1 <= 12 else (n2, n1)
             return datetime(hoje.year, mes, dia)
 
-        # 3. Busca dias ou semanas atrás (ex: "2d", "2 d", "3w", "3 sem")
         match_relativo = re.search(r'(\d+)\s*(d|w|dia|sem)', texto)
         if match_relativo:
             qtd = int(match_relativo.group(1))
             unidade = match_relativo.group(2)
-            if 'w' in unidade or 'sem' in unidade:
-                return hoje - timedelta(weeks=qtd)
-            else:
-                return hoje - timedelta(days=qtd)
+            if 'w' in unidade or 'sem' in unidade: return hoje - timedelta(weeks=qtd)
+            else: return hoje - timedelta(days=qtd)
         
-        # 4. Horas/minutos (praticamente hoje)
-        if re.search(r'\d+\s*(h|m|s)', texto) or 'agora' in texto:
-            return hoje
+        if re.search(r'\d+\s*(h|m|s)', texto) or 'agora' in texto: return hoje
             
     except Exception as e:
         print(f"      ⚠️ Erro ao converter data '{texto}': {e}")
-        
     return hoje
 
 def converter_numero(texto):
@@ -66,55 +58,31 @@ def converter_numero(texto):
         return 0
 
 def iniciar_driver():
-    sistema = platform.system()
     options = Options()
-    if sistema == "Linux":
-        options.binary_location = "/usr/bin/google-chrome"
-        options.add_argument("--disable-dev-shm-usage") 
-        options.add_argument("--no-sandbox")
-    
     options.add_argument("--start-maximized")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
-    
     servico = Service(ChromeDriverManager().install())
     return webdriver.Chrome(service=servico, options=options)
 
-# --- DETECTOR DE BLOQUEIO REFINADO ---
 def verificar_bloqueios(driver):
-    """
-    Verifica se há Captcha ou se a página quebrou.
-    Retorna True se houve intervenção manual.
-    """
     try:
-        # 1. Verifica URL suspeita
         url_atual = driver.current_url.lower()
         if "verify" in url_atual or "challenge" in url_atual:
             print("\n" + "█"*50)
             print("🚨 DETECTADO PELA URL: O TikTok pediu verificação!")
-            print("👉 AÇÃO: Resolva o Captcha no navegador.")
-            input("👉 DEPOIS: Aperte [ENTER] aqui para continuar...")
-            time.sleep(3)
+            input("👉 Resolva o Captcha e aperte [ENTER] para continuar...")
             return True
-
-        # 2. Verifica Texto VISÍVEL (não o código fonte oculto)
         try:
             texto_visivel = driver.find_element(By.TAG_NAME, "body").text.lower()
-            indicadores = ["verify to continue", "arraste o controle", "rotate the image", "verificação de segurança"]
-            
-            if any(ind in texto_visivel for ind in indicadores):
+            if any(ind in texto_visivel for ind in ["verify to continue", "arraste o controle", "verificação"]):
                 print("\n" + "█"*50)
                 print("🚨 DETECTADO PELO TEXTO: O TikTok pediu verificação!")
-                print("👉 AÇÃO: Resolva o Captcha no navegador.")
-                input("👉 DEPOIS: Aperte [ENTER] aqui para continuar...")
-                time.sleep(3)
+                input("👉 Resolva o Captcha e aperte [ENTER] para continuar...")
                 return True
         except: pass
-
-    except Exception as e:
-        print(f"⚠️ Erro leve na verificação: {e}")
-    
+    except: pass
     return False
 
 def extrair_comentarios(driver, max_comentarios=50):
@@ -125,8 +93,6 @@ def extrair_comentarios(driver, max_comentarios=50):
         print(f"      💬 Carregando até {max_comentarios} comentários...")
         time.sleep(2) 
         
-        # 1. AQUECIMENTO (Garante que tem pelo menos o suficiente na tela)
-        # 10 tentativas de scroll para alcançar os 50
         tentativas_scroll = 0
         while tentativas_scroll < 10:
             elementos = driver.find_elements(By.XPATH, xpath_busca)
@@ -134,8 +100,7 @@ def extrair_comentarios(driver, max_comentarios=50):
                 xpath_busca = "//div[contains(@class, 'Comment') and contains(@class, 'Content')]"
                 elementos = driver.find_elements(By.XPATH, xpath_busca)
                 
-            if len(elementos) >= (max_comentarios + 5):
-                break
+            if len(elementos) >= (max_comentarios + 5): break
                 
             if elementos:
                 try:
@@ -144,110 +109,78 @@ def extrair_comentarios(driver, max_comentarios=50):
                 except: pass
             tentativas_scroll += 1
 
-        # 2. A COLETA ANTI-STALE
         index_atual = 0
         falhas_consecutivas = 0
         
         while len(comentarios_coletados) < max_comentarios and falhas_consecutivas < 5:
             elementos_frescos = driver.find_elements(By.XPATH, xpath_busca)
-            
-            if index_atual >= len(elementos_frescos):
-                break 
+            if index_atual >= len(elementos_frescos): break 
 
             el = elementos_frescos[index_atual]
             
             try:
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el)
                 time.sleep(0.3)
-                
-                texto_bloco_inteiro = el.text.strip()
-                if not texto_bloco_inteiro:
+                texto_bloco = el.text.strip()
+                if not texto_bloco:
                     index_atual += 1
                     continue
                     
                 texto_comentario = ""
                 autor_comentario = "Desconhecido"
                 
-                try:
-                    texto_comentario = el.find_element(By.TAG_NAME, "p").text.strip()
+                try: texto_comentario = el.find_element(By.TAG_NAME, "p").text.strip()
                 except: pass
 
-                linhas = [L.strip() for L in texto_bloco_inteiro.split('\n') if L.strip()]
+                linhas = [L.strip() for L in texto_bloco.split('\n') if L.strip()]
                 if linhas:
-                    autor_comentario = linhas[0]
-                    if "·" in autor_comentario:
-                        autor_comentario = autor_comentario.split('·')[0].strip()
+                    autor_comentario = linhas[0].split('·')[0].strip()
 
                 if not texto_comentario and len(linhas) >= 2:
                     texto_comentario = linhas[1]
 
                 if texto_comentario:
-                    comentarios_coletados.append({
-                        "autor": autor_comentario,
-                        "texto": texto_comentario
-                    })
+                    comentarios_coletados.append({"autor": autor_comentario, "texto": texto_comentario})
                     falhas_consecutivas = 0 
-                
                 index_atual += 1 
 
-            except Exception as e:
+            except:
                 falhas_consecutivas += 1
                 time.sleep(0.5)
 
-    except Exception as e:
-        print(f"      ⚠️ Erro geral na extração: {e}")
-
+    except Exception as e: print(f"      ⚠️ Erro geral na extração: {e}")
     return comentarios_coletados
 
 def processar_perfil(driver, perfil_alvo):
-    dados_finais = {
-        "username": perfil_alvo,
-        "scraped_at": datetime.now().isoformat(),
-        "videos": []
-    }
+    dados_finais = {"username": perfil_alvo, "scraped_at": datetime.now().isoformat(), "videos": []}
 
     try:
         url_perfil = f"https://www.tiktok.com/@{perfil_alvo}"
         print(f"🔄 Acessando Perfil: {url_perfil}")
         driver.get(url_perfil)
         time.sleep(4) 
-
         verificar_bloqueios(driver)
 
         videos_na_tela = driver.find_elements(By.CSS_SELECTOR, '[data-e2e="user-post-item"]')
-        
         if len(videos_na_tela) == 0:
-            print(f"\n⚠️ AVISO: Não encontrei vídeos em @{perfil_alvo}.")
-            print("🛑 PAUSANDO PARA AJUDA HUMANA.")
-            print("👉 AÇÃO: Se a página não carregou, dê F5. Se tem Captcha, resolva.")
-            input("👉 DEPOIS: Aperte [ENTER] para o robô tentar buscar os vídeos de novo...")
-            
+            print(f"⚠️ AVISO: Não encontrei vídeos em @{perfil_alvo}.")
+            input("👉 Se a página não carregou, dê F5. Aperte [ENTER] para tentar de novo...")
             time.sleep(3)
             videos_na_tela = driver.find_elements(By.CSS_SELECTOR, '[data-e2e="user-post-item"]')
-            
-            if len(videos_na_tela) == 0:
-                print(f"❌ Ainda sem vídeos. Pulando @{perfil_alvo}...")
-                return None
+            if len(videos_na_tela) == 0: return None
 
         print("👆 Abrindo primeiro vídeo...")
-        try:
-            videos_na_tela[0].click()
-            time.sleep(3)
-        except Exception as e:
-            print(f"❌ Erro ao clicar: {e}")
-            return None
+        videos_na_tela[0].click()
+        time.sleep(3)
 
-        # Limite da Fiocruz definido para 60 dias (Altere aqui se precisar)
         dias_limite = 60
         data_limite = datetime.now() - timedelta(days=dias_limite)
-        print(f"   📅 O robô vai coletar tudo publicado APÓS: {data_limite.strftime('%d/%m/%Y')}")
+        print(f"   📅 Coletando APÓS: {data_limite.strftime('%d/%m/%Y')}")
 
         contador_video = 0
-        
         while True:
             contador_video += 1
             print(f"   🎥 Extraindo vídeo {contador_video}...")
-            
             video_data = {"descricao": "", "data_publicacao": "", "stats": {"likes": 0, "comments": 0, "shares": 0}, "comentarios_coletados": [], "url": driver.current_url}
 
             try:
@@ -257,19 +190,16 @@ def processar_perfil(driver, perfil_alvo):
                 try:
                     elemento_nome = driver.find_element(By.CSS_SELECTOR, '[data-e2e="browse-username"]')
                     texto_bruto = driver.execute_script("return arguments[0].parentNode.innerText;", elemento_nome)
-                    
                     data_do_video = converter_data_tiktok(texto_bruto)
                     video_data["data_publicacao"] = data_do_video.strftime('%d/%m/%Y')
-                except Exception as e:
+                except:
                     data_do_video = datetime.now()
                     video_data["data_publicacao"] = "Desconhecida"
-                    texto_bruto = "Erro de leitura"
                 
-                texto_limpo_print = texto_bruto.replace('\n', ' ').strip()
-                print(f"      🕒 Data: {video_data['data_publicacao']} | Lendo de: '{texto_limpo_print}'")
+                print(f"      🕒 Data: {video_data['data_publicacao']}")
                 
                 if data_do_video < data_limite and contador_video > 3:
-                    print(f"      🛑 Limite de {dias_limite} dias alcançado! Parando a coleta neste perfil.")
+                    print(f"      🛑 Limite de {dias_limite} dias alcançado!")
                     break 
 
                 try: video_data["descricao"] = driver.find_element(By.CSS_SELECTOR, '[data-e2e="browse-video-desc"]').text
@@ -281,20 +211,16 @@ def processar_perfil(driver, perfil_alvo):
                 try: video_data["stats"]["shares"] = converter_numero(driver.find_element(By.CSS_SELECTOR, '[data-e2e="share-count"]').text)
                 except: pass
 
-                # Aqui garantimos que o extrator seja chamado buscando os 50
                 if video_data["stats"]["comments"] > 0:
                     video_data["comentarios_coletados"] = extrair_comentarios(driver, max_comentarios=50)
 
                 print(f"      ✅ Likes: {video_data['stats']['likes']} | Comentários: {len(video_data['comentarios_coletados'])}")
                 dados_finais["videos"].append(video_data)
                 
-            except Exception as e:
-                print(f"      ⚠️ Erro no vídeo: {e}")
+            except Exception as e: print(f"      ⚠️ Erro no vídeo: {e}")
 
-            try: 
-                driver.find_element(By.CSS_SELECTOR, '[data-e2e="arrow-right"]').click()
-            except: 
-                ActionChains(driver).send_keys(Keys.ARROW_DOWN).perform()
+            try: driver.find_element(By.CSS_SELECTOR, '[data-e2e="arrow-right"]').click()
+            except: ActionChains(driver).send_keys(Keys.ARROW_DOWN).perform()
             time.sleep(2.5)
         
         return dados_finais
@@ -306,7 +232,7 @@ def processar_perfil(driver, perfil_alvo):
 if __name__ == "__main__":
     driver = iniciar_driver()
     try:
-        print("🍪 Injetando Cookies...")
+        print("🍪 Injetando Cookies do TikTok...")
         driver.get("https://www.tiktok.com/")
         diretorio_src = os.path.dirname(os.path.abspath(__file__))
         caminho_cookie = os.path.join(diretorio_src, "config", "tiktok", "logins_tiktok", "tiktok_cookies.pkl")
@@ -316,25 +242,22 @@ if __name__ == "__main__":
             for cookie in cookies: driver.add_cookie(cookie)
             driver.refresh()
             time.sleep(3)
-        except: print("⚠️ Visitante (Sem cookies).")
+        except: print("⚠️ Sem cookies.")
 
         pasta_data = os.path.join(diretorio_src, "..", "data")
         caminho_csv = os.path.join(pasta_data, "famosos_tiktok.csv")
         
         if os.path.exists(caminho_csv):
             with open(caminho_csv, "r", encoding="utf-8") as arquivo:
-                leitor = csv.DictReader(arquivo)
-                for linha in leitor:
+                for linha in csv.DictReader(arquivo):
                     perfil = linha["nome_do_perfil"].strip()
                     if perfil:
-                        print(f"\n📌 PROCESSANDO: {perfil}")
+                        print(f"\n📌 PROCESSANDO TIKTOK: {perfil}")
                         resultado = processar_perfil(driver, perfil)
                         if resultado:
-                            caminho_json = os.path.join(pasta_data, f"tiktok_{perfil}_data.json")
-                            with open(caminho_json, 'w', encoding='utf-8') as f:
+                            with open(os.path.join(pasta_data, f"tiktok_{perfil}_data.json"), 'w', encoding='utf-8') as f:
                                 json.dump(resultado, f, ensure_ascii=False, indent=4)
                             print("✨ JSON Salvo!")
                             time.sleep(random.randint(5, 10))
     finally:
         driver.quit()
-        print("\n🏁 Fim.")
