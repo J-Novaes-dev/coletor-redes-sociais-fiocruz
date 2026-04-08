@@ -244,7 +244,11 @@ if __name__ == "__main__":
             time.sleep(3)
         except: print("⚠️ Sem cookies.")
 
+        # --- NOVA ORGANIZAÇÃO DE PASTAS ---
         pasta_data = os.path.join(diretorio_src, "..", "data")
+        pasta_json_tiktok = os.path.join(pasta_data, "dados_tiktok")
+        os.makedirs(pasta_json_tiktok, exist_ok=True) # Cria a pasta dados_tiktok automaticamente!
+
         caminho_csv = os.path.join(pasta_data, "famosos_tiktok.csv")
         
         if os.path.exists(caminho_csv):
@@ -255,9 +259,11 @@ if __name__ == "__main__":
                         print(f"\n📌 PROCESSANDO TIKTOK: {perfil}")
                         resultado = processar_perfil(driver, perfil)
                         if resultado:
-                            with open(os.path.join(pasta_data, f"tiktok_{perfil}_data.json"), 'w', encoding='utf-8') as f:
+                            # Salva o arquivo dentro da nova subpasta
+                            caminho_json = os.path.join(pasta_json_tiktok, f"tiktok_{perfil}_data.json")
+                            with open(caminho_json, 'w', encoding='utf-8') as f:
                                 json.dump(resultado, f, ensure_ascii=False, indent=4)
-                            print("✨ JSON Salvo!")
+                            print(f"✨ JSON Salvo em: data/dados_tiktok/tiktok_{perfil}_data.json")
                             time.sleep(random.randint(5, 10))
     finally:
         driver.quit()
